@@ -6,13 +6,16 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
+	"testing"
+
+	"github.com/centrifuge/centrifuge-protobufs/gen/go/coredocument"
+
 	"github.com/centrifuge/go-centrifuge/nft"
 	"github.com/centrifuge/go-centrifuge/protobufs/gen/go/document"
 	"github.com/centrifuge/go-centrifuge/transactions"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"os"
-	"testing"
 
 	"github.com/centrifuge/go-centrifuge/testingutils/documents"
 
@@ -43,15 +46,15 @@ import (
 )
 
 var (
-	handler    *receiver.Handler
-	anchorRepo anchors.AnchorRepository
-	cfg        config.Configuration
-	idService  identity.Service
-	cfgService config.Service
-	docSrv     documents.Service
- payOb nft.PaymentObligation
- txManager transactions.Manager
- tokenRegistry documents.TokenRegistry
+	handler       *receiver.Handler
+	anchorRepo    anchors.AnchorRepository
+	cfg           config.Configuration
+	idService     identity.Service
+	cfgService    config.Service
+	docSrv        documents.Service
+	payOb         nft.PaymentObligation
+	txManager     transactions.Manager
+	tokenRegistry documents.TokenRegistry
 )
 
 func TestMain(m *testing.M) {
@@ -81,7 +84,7 @@ func TestHandler_GetDocument_nonexistentIdentifier(t *testing.T) {
 	assert.Nil(t, resp, "must be nil")
 }
 
-func updateAndAnchorDocument (t *testing.T, dm *documents.CoreDocumentModel, centrifugeId identity.CentID, ctxh context.Context) {
+func updateAndAnchorDocument(t *testing.T, dm *documents.CoreDocumentModel, centrifugeId identity.CentID, ctxh context.Context) {
 	idConfig, err := identity.GetIdentityConfig(cfg)
 	dm = prepareDocumentForP2PHandler(t, dm)
 
@@ -90,6 +93,7 @@ func updateAndAnchorDocument (t *testing.T, dm *documents.CoreDocumentModel, cen
 
 	req := getSignatureRequest(dm)
 	resp, err := handler.RequestDocumentSignature(ctxh, req)
+	assert.NoError(t, err)
 
 	dm.Document.EmbeddedData = ed
 	dm.Document.EmbeddedDataSalts = edsalts
@@ -138,11 +142,12 @@ func TestHandler_GetDocumentSucceeds(t *testing.T) {
 	// Retrieve document from anchor repository with access token verification access type
 	docID := hexutil.Encode(dm.Document.DocumentIdentifier)
 	at := documentpb.AccessTokenParams{
-		Grantee: centrifugeId.String(),
+		Grantee:            centrifugeId.String(),
 		DocumentIdentifier: docID,
 	}
 	dm, err = dm.AddAccessTokenToReadRules(*idConfig, at)
-
+	cdSalts, _ = documents.GenerateNewSalts(dm.Document, "", nil)
+	dm.Document.CoredocumentSalts = documents.ConvertToProtoSalts(cdSalts)
 	updateAndAnchorDocument(t, dm, centrifugeId, ctxh)
 
 	role := dm.Document.Roles[1]
@@ -407,7 +412,7 @@ func prepareDocumentForP2PHandler(t *testing.T, dm *documents.CoreDocumentModel)
 	doc := dm.Document
 	doc.SigningRoot = tree.RootHash()
 	sig := identity.Sign(idConfig, identity.KeyPurposeSigning, doc.SigningRoot)
-	doc.Signatures = append(doc.Signatures, sig)
+	doc.Signatures = []*coredocumentpb.Signature{sig}
 	tree, err = dm.GetDocumentRootTree()
 	assert.NoError(t, err)
 	doc.DocumentRoot = tree.RootHash()
@@ -449,20 +454,20 @@ func getDocumentRequestPeer(dm *documents.CoreDocumentModel) *p2ppb.GetDocumentR
 func getDocumentRequestNft(dm *documents.CoreDocumentModel, registry common.Address, tokenID []byte) *p2ppb.GetDocumentRequest {
 	return &p2ppb.GetDocumentRequest{
 		DocumentIdentifier: dm.Document.DocumentIdentifier,
-		AccessType: p2ppb.AccessType_ACCESS_TYPE_NFT_OWNER_VERIFICATION,
+		AccessType:         p2ppb.AccessType_ACCESS_TYPE_NFT_OWNER_VERIFICATION,
 		NftRegistryAddress: registry[:],
-		NftTokenId: tokenID,
+		NftTokenId:         tokenID,
 	}
 }
 
 func getDocumentRequestAccessToken(dm *documents.CoreDocumentModel, tokenID []byte) *p2ppb.GetDocumentRequest {
 	atr := &p2ppb.AccessTokenRequest{
 		DelegatingDocumentIdentifier: dm.Document.DocumentIdentifier,
-		AccessTokenId: tokenID,
+		AccessTokenId:                tokenID,
 	}
 	return &p2ppb.GetDocumentRequest{
 		DocumentIdentifier: dm.Document.DocumentIdentifier,
-		AccessType: p2ppb.AccessType_ACCESS_TYPE_ACCESS_TOKEN_VERIFICATION,
+		AccessType:         p2ppb.AccessType_ACCESS_TYPE_ACCESS_TOKEN_VERIFICATION,
 		AccessTokenRequest: atr,
 	}
 }
